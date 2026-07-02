@@ -53,6 +53,13 @@ skills/
 ├── file/        📁 文件操作
 ├── web/         🌐 网络请求
 ├── ui/          🖥️ 界面组件
+├── memory/      🧠 记忆系统（短期/长期/上下文）
+├── safety/      🛡️ 安全护栏（审核/过滤/对齐）
+├── task/        📋 任务管理（规划/执行/跟踪）
+├── learning/    📚 学习能力（知识获取/技能沉淀）
+├── personality/ 🎭 人格/角色设定
+├── tool/        🔧 工具调用（API/系统操作/外部服务）
+├── conversation/💬 对话管理（多轮/上下文/压缩）
 ├── other/       📦 其他
 └── ai-builder/  🧩 元能力：帮用户组合 Skill
 ```
@@ -76,11 +83,22 @@ Or tell your AI: "我想贡献一个 skill" / 或告诉你的 AI："我想贡献
 See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 **What we need most / 我们最需要的**:
-- 🎤 Audio skills (voice, music, sound) / 音频类 Skill
-- 💻 Coding skills (review, test, deploy) / 编程类 Skill
-- 📊 Data skills (analyze, visualize, transform) / 数据类 Skill
-- 🌐 Web skills (scrape, API, automation) / 网络类 Skill
-- 🧩 Creative skills (image, video, 3D) / 创意类 Skill
+
+| Category | Skills needed / 需要的 Skill |
+|----------|------------------------------|
+| 🎤 audio | voice recognition, music generation, sound effects / 语音识别、音乐生成、音效 |
+| 💻 code | code review, test generation, refactoring, documentation / 代码审查、测试生成、重构、文档 |
+| 📊 data | CSV/JSON parsing, visualization, cleaning, analysis / 数据解析、可视化、清洗、分析 |
+| 📁 file | file management, batch operations, format conversion / 文件管理、批量操作、格式转换 |
+| 🌐 web | API calling, scraping, automation, monitoring / API 调用、爬虫、自动化、监控 |
+| 🖥️ ui | component generation, layout, themes / 组件生成、布局、主题 |
+| 🧠 memory | short-term/long-term memory, context management, summarization / 短期长期记忆、上下文管理、摘要 |
+| 🛡️ safety | content filtering, output validation, alignment / 内容过滤、输出校验、对齐 |
+| 📋 task | planning, scheduling, progress tracking / 规划、调度、进度跟踪 |
+| 📚 learning | knowledge acquisition, skill extraction, adaptation / 知识获取、技能沉淀、自适应 |
+| 🎭 personality | character design, tone control, role playing / 角色设计、语气控制、角色扮演 |
+| 🔧 tool | API integration, system commands, external services / API 集成、系统命令、外部服务 |
+| 💬 conversation | multi-turn, context compression, topic switching / 多轮对话、上下文压缩、话题切换 |
 
 ---
 
