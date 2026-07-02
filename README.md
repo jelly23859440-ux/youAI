@@ -1,43 +1,58 @@
-# AI Skills
+# youAI
 
-模块化的 AI Skill 仓库。每个 Skill 是一份独立的指令文档，AI 工具读取后即可获得对应能力。
+Modular AI Skill repository. Build your own AI like stacking LEGO blocks.
 
-## 什么是 Skill
+模块化 AI Skill 仓库，像搭积木一样构建你自己的 AI。
 
-Skill 是一份给 AI 看的说明书。用户对 AI 说"我要做 X"，AI 读取对应的 Skill，就知道怎么帮用户实现。
+---
 
-**举例**：用户说"我想给应用加语音识别"，AI 读取 `voice-recognition` Skill，就知道要安装什么、改哪些代码、怎么排查问题。
+## What is a Skill?
 
-## 已有 Skills
+A Skill is a set of instructions for AI. When a user says "I want to do X", the AI reads the corresponding Skill and knows how to help.
 
-| Skill | 状态 | 说明 |
-|-------|------|------|
-| [voice-recognition](skills/voice-recognition/) | ✅ 可用 | 本地语音识别（4 种录音方案 + funasr 本地模型） |
+Skill 是一份给 AI 看的说明书。用户说"我要做 X"，AI 读取对应的 Skill，就知道怎么帮用户实现。
 
-## 怎么用
+**Example / 举例**：用户说"我想给应用加语音识别"，AI 读取 `voice-recognition` Skill，就知道要安装什么、改哪些代码、怎么排查问题。
 
-1. 找到你需要的 Skill
-2. 把 `SKILL.md` 的内容给你的 AI 工具（粘贴、引用、或放到项目目录）
-3. AI 读取后按指引执行
+---
 
-## 怎么贡献
+## Available Skills
 
-1. Fork 本仓库
-2. 按照 [SKILL-FORMAT.md](SKILL-FORMAT.md) 的格式写一个新 Skill
-3. 提交 PR
+| Skill | Status | Description |
+|-------|--------|-------------|
+| [voice-recognition](skills/voice-recognition/) | ✅ Ready | Local speech recognition (4 recording solutions + funasr local model) / 本地语音识别（4 种录音方案 + funasr 本地模型） |
 
-详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+---
 
-## Skill 格式
+## Quick Start / 快速开始
 
-详见 [SKILL-FORMAT.md](SKILL-FORMAT.md)。
+1. Find the Skill you need / 找到你需要的 Skill
+2. Give `SKILL.md` to your AI tool (paste, reference, or put in project directory) / 把 `SKILL.md` 给你的 AI 工具
+3. AI reads it and follows the instructions / AI 读取后按指引执行
 
-核心结构：
+---
+
+## Contributing / 贡献
+
+1. Fork this repository / Fork 本仓库
+2. Write a new Skill following [SKILL-FORMAT.md](SKILL-FORMAT.md) / 按照 SKILL-FORMAT.md 写一个新 Skill
+3. Submit a PR / 提交 PR
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for details. / 详见 CONTRIBUTING.md。
+
+---
+
+## Skill Format / Skill 格式
+
+See [SKILL-FORMAT.md](SKILL-FORMAT.md).
+
 ```
 skills/<skill-name>/
-├── SKILL.md              # 必须：给 AI 的指令文档
-└── scripts/              # 可选：可执行脚本
+├── SKILL.md              # Required: instructions for AI / 必须：给 AI 的指令文档
+└── scripts/              # Optional: executable scripts / 可选：可执行脚本
 ```
+
+---
 
 ## License
 
