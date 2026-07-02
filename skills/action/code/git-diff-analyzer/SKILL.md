@@ -341,7 +341,7 @@ def to_markdown(report: DiffReport) -> str:
 
 def tool_call(params: dict) -> dict:
     """
-    元婴系统调用入口
+    通用调用入口（可被任何 AI Agent 调用）
     
     params: {
         "repo_path": str,      # 仓库路径，默认"."
