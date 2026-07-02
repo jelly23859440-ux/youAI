@@ -225,11 +225,12 @@ def validate_cron_expressions(expressions: List[str]) -> List[dict]:
     for expr in expressions:
         try:
             cron = CronParser(expr)
+            runs = cron.next_run(count=1)
             results.append({
                 "expression": expr,
                 "valid": True,
                 "description": cron.describe(),
-                "next_run": cron.next_run(count=1)[0].isoformat() if cron.next_run(count=1) else None,
+                "next_run": runs[0].isoformat() if runs else None,
             })
         except Exception as e:
             results.append({
