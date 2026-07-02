@@ -50,6 +50,7 @@ description: >
 import smtplib
 import argparse
 import os
+import mimetypes
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
@@ -79,7 +80,8 @@ class EmailSender:
         to: str | List[str],
         subject: str,
         body: str,
-        cc: Optional[str | List[str]] = None
+        cc: Optional[str | List[str]] = None,
+        bcc: Optional[str | List[str]] = None
     ) -> Dict:
         """发送文本邮件"""
         if isinstance(to, str):
@@ -95,7 +97,9 @@ class EmailSender:
                 cc = [cc]
             msg['Cc'] = ', '.join(cc)
         
-        return self._send(msg, to + (cc or []))
+        # BCC 收件人不写入邮件头
+        all_recipients = to + (cc or []) + (bcc or [])
+        return self._send(msg, all_recipients)
     
     def send_html(
         self,
@@ -103,7 +107,8 @@ class EmailSender:
         subject: str,
         html_body: str,
         text_body: Optional[str] = None,
-        cc: Optional[str | List[str]] = None
+        cc: Optional[str | List[str]] = None,
+        bcc: Optional[str | List[str]] = None
     ) -> Dict:
         """发送 HTML 邮件"""
         if isinstance(to, str):
@@ -124,7 +129,8 @@ class EmailSender:
         
         msg.attach(MIMEText(html_body, 'html', 'utf-8'))
         
-        return self._send(msg, to + (cc or []))
+        all_recipients = to + (cc or []) + (bcc or [])
+        return self._send(msg, all_recipients)
     
     def send_with_attachments(
         self,
@@ -133,7 +139,8 @@ class EmailSender:
         body: str,
         attachments: List[str],
         is_html: bool = False,
-        cc: Optional[str | List[str]] = None
+        cc: Optional[str | List[str]] = None,
+        bcc: Optional[str | List[str]] = None
     ) -> Dict:
         """
         发送带附件的邮件
@@ -145,6 +152,7 @@ class EmailSender:
             attachments: 附件文件路径列表
             is_html: 正文是否为 HTML
             cc: 抄送（可选）
+            bcc: 密送（可选，不写入邮件头）
         """
         if isinstance(to, str):
             to = [to]
@@ -167,7 +175,10 @@ class EmailSender:
         for file_path in attachments:
             if os.path.exists(file_path):
                 with open(file_path, 'rb') as f:
-                    part = MIMEApplication(f.read())
+                    # 根据扩展名设置正确的 MIME 类型
+                    mime_type, _ = mimetypes.guess_type(file_path)
+                    subtype = mime_type.split('/')[-1] if mime_type else 'octet-stream'
+                    part = MIMEApplication(f.read(), _subtype=subtype)
                     filename = os.path.basename(file_path)
                     part.add_header(
                         'Content-Disposition', 
@@ -177,7 +188,7 @@ class EmailSender:
             else:
                 missing_attachments.append(file_path)
         
-        result = self._send(msg, to + (cc or []))
+        result = self._send(msg, to + (cc or []) + (bcc or []))
         result["missing_attachments"] = missing_attachments
         return result
     
