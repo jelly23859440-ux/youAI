@@ -51,6 +51,16 @@ AI 根据用户环境自动选择最佳方案。
 | [ssh-remote](device/ssh-remote/SKILL.md) | paramiko | SSH 远程执行 + SFTP |
 | [email-sender](device/email-sender/SKILL.md) | 无（内置） | 邮件发送（文本/HTML/附件） |
 
+### Media / 媒体处理
+
+| Skill | 依赖 | 说明 |
+|-------|------|------|
+| [workflow-engine](media/workflow-engine/SKILL.md) | 无 | 节点式工作流引擎 |
+| [image-generation](media/image-generation/SKILL.md) | requests + ComfyUI | 图片生成 |
+| [video-generation](media/video-generation/SKILL.md) | requests + ComfyUI | 视频生成 |
+| [model-manager](media/model-manager/SKILL.md) | 无 | 模型管理 |
+| [workflow-serialization](media/workflow-serialization/SKILL.md) | 无 | 工作流序列化 |
+
 ## 快速安装
 
 ```bash
