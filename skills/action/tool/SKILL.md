@@ -52,15 +52,55 @@ description: >
 3. **实际执行** — 运行工具逻辑
 4. **结果返回** — 输出结构化结果
 
-## 工具定义
+## 核心类型
+
+### ToolResult（统一返回类型）
 
 ```typescript
-interface Tool<Input, Output, Progress> {
+type ToolResult<T> = 
+  | { success: true; data: T }
+  | { success: false; error: string };
+```
+
+### Tool 接口
+
+```typescript
+interface Tool<Input, Output, Progress = { stage: string; percent: number }> {
   name: string;
   description: string;
   inputSchema: ZodSchema<Input>;
   permission: PermissionModel;
   execute(input: Input, context: ToolContext): Promise<ToolResult<Output>>;
+  
+  // 可选：根据上下文判断工具是否可用（如 feature flag 控制）
+  isAvailable?: (context: ToolContext) => boolean;
+  
+  // 可选：渲染进度（大部分工具用默认 Progress 即可）
+  renderProgress?(progress: Progress): React.ComponentType;
+}
+```
+
+### PermissionRule
+
+```typescript
+interface PermissionRule<Input> {
+  // condition 同时接收 input 和 context
+  condition: (input: Input, context: ToolContext) => boolean;
+  action: 'allow' | 'deny' | 'prompt';
+  reason?: string;
+}
+```
+
+### ToolContext
+
+```typescript
+interface ToolContext {
+  cwd: string;
+  messages: Message[];
+  permissions: PermissionState;
+  mcpServers: MCPServer[];
+  abortSignal: AbortSignal;
+  onProgress: (progress: Progress) => void;
 }
 ```
 
@@ -82,6 +122,110 @@ interface Tool<Input, Output, Progress> {
 | 网络请求 | WebFetch, WebSearch | 自动批准 |
 | Agent 协作 | Agent, SendMessage | 需确认 |
 | 任务管理 | TaskCreate, TaskUpdate | 自动批准 |
+
+## 工具注册表
+
+```typescript
+class ToolRegistry {
+  private tools: Map<string, Tool<any, any, any>> = new Map();
+  
+  register(tool: Tool<any, any, any>): void {
+    this.tools.set(tool.name, tool);
+  }
+  
+  get(name: string): Tool<any, any, any> | undefined {
+    return this.tools.get(name);
+  }
+  
+  getAll(): Tool<any, any, any>[] {
+    return Array.from(this.tools.values());
+  }
+  
+  // 按需加载：只返回当前可用的工具
+  getForContext(context: ToolContext): Tool<any, any, any>[] {
+    return this.getAll().filter(tool => 
+      tool.isAvailable?.(context) ?? true
+    );
+  }
+}
+```
+
+## 工具执行引擎
+
+### 单工具执行
+
+```typescript
+async function executeTool(
+  tool: Tool<any, any, any>,
+  input: any,
+  context: ToolContext
+): Promise<ToolResult> {
+  // 1. Schema 验证
+  const validatedInput = tool.inputSchema.parse(input);
+  
+  // 2. 权限检查
+  const permission = await checkPermission(tool, validatedInput, context);
+  if (permission.denied) {
+    return { success: false, error: permission.reason };
+  }
+  
+  // 3. 执行
+  const result = await tool.execute(validatedInput, context);
+  
+  // 4. 记录
+  logToolExecution(tool.name, validatedInput, result);
+  
+  return result;
+}
+```
+
+### 并行执行（拓扑排序）
+
+```typescript
+interface ToolCall {
+  toolName: string;
+  input: any;
+  deps?: string[];  // 依赖的其他工具名
+}
+
+async function executeToolsParallel(
+  calls: ToolCall[],
+  context: ToolContext
+): Promise<Map<string, ToolResult>> {
+  const results = new Map<string, ToolResult>();
+  const remaining = [...calls];
+  
+  while (remaining.length > 0) {
+    // 找出所有依赖已满足的调用
+    const ready = remaining.filter(call => 
+      !call.deps?.some(dep => 
+        remaining.some(r => r.toolName === dep)
+      )
+    );
+    
+    if (ready.length === 0) {
+      throw new Error('循环依赖');
+    }
+    
+    // 并行执行这一批
+    const batchResults = await Promise.all(
+      ready.map(async call => {
+        const tool = registry.get(call.toolName);
+        const result = await executeTool(tool, call.input, context);
+        return [call.toolName, result] as const;
+      })
+    );
+    
+    // 记录结果，移除已完成的调用
+    for (const [name, result] of batchResults) {
+      results.set(name, result);
+      remaining.splice(remaining.findIndex(r => r.toolName === name), 1);
+    }
+  }
+  
+  return results;
+}
+```
 
 ## 目录结构
 
@@ -115,6 +259,7 @@ tools/
 | 权限被拒 | 违反权限规则 | 检查 permission 配置 |
 | 执行超时 | 操作时间过长 | 增加 timeout |
 | MCP 不可用 | 服务器未连接 | 检查 MCP 配置 |
+| 并行执行卡住 | 存在循环依赖 | 检查 deps 配置 |
 
 ## 依赖
 

@@ -45,18 +45,31 @@ description: >
 └─────────────────────────────────────────┘
 ```
 
-## 1. 工具定义
+## 1. 核心类型
 
-每个工具是一个独立文件，遵循统一接口：
+### ToolResult（统一返回类型）
+
+```typescript
+type ToolResult<T> = 
+  | { success: true; data: T }
+  | { success: false; error: string };
+```
+
+### Tool 接口
 
 ```typescript
 // tool.ts
-interface Tool<Input, Output, Progress> {
+interface Tool<Input, Output, Progress = { stage: string; percent: number }> {
   name: string;
   description: string;
   inputSchema: ZodSchema<Input>;      // Zod v4
   permission: PermissionModel;
   execute(input: Input, context: ToolContext): Promise<ToolResult<Output>>;
+  
+  // 可选：根据上下文判断工具是否可用（如 feature flag 控制）
+  isAvailable?: (context: ToolContext) => boolean;
+  
+  // 可选：渲染进度（大部分工具用默认 Progress 即可）
   renderProgress?(progress: Progress): React.ComponentType;
 }
 ```
@@ -84,7 +97,8 @@ type PermissionModel =
   | { type: 'rule', rules: PermissionRule[] }  // 基于规则
   | { type: 'deny' };                   // 禁止
 
-interface PermissionRule {
+interface PermissionRule<Input> {
+  // condition 同时接收 input 和 context
   condition: (input: Input, context: ToolContext) => boolean;
   action: 'allow' | 'deny' | 'prompt';
   reason?: string;
@@ -163,7 +177,7 @@ async function executeTool(
   // 2. 权限检查
   const permission = await checkPermission(tool, validatedInput, context);
   if (permission.denied) {
-    return { error: permission.reason };
+    return { success: false, error: permission.reason };
   }
   
   // 3. 执行
@@ -176,28 +190,51 @@ async function executeTool(
 }
 ```
 
-### 并行执行
+### 并行执行（拓扑排序）
 
-多个独立工具可以并行执行：
+多个工具可以并行执行，支持依赖链：
 
 ```typescript
+interface ToolCall {
+  toolName: string;
+  input: any;
+  deps?: string[];  // 依赖的其他工具名
+}
+
 async function executeToolsParallel(
   calls: ToolCall[],
   context: ToolContext
-): Promise<ToolResult[]> {
-  // 检查依赖关系
-  const independent = calls.filter(call => 
-    !calls.some(other => 
-      other.deps?.includes(call.toolName)
-    )
-  );
+): Promise<Map<string, ToolResult>> {
+  const results = new Map<string, ToolResult>();
+  const remaining = [...calls];
   
-  // 并行执行独立调用
-  const results = await Promise.all(
-    independent.map(call => 
-      executeTool(registry.get(call.toolName), call.input, context)
-    )
-  );
+  while (remaining.length > 0) {
+    // 找出所有依赖已满足的调用
+    const ready = remaining.filter(call => 
+      !call.deps?.some(dep => 
+        remaining.some(r => r.toolName === dep)
+      )
+    );
+    
+    if (ready.length === 0) {
+      throw new Error('循环依赖');
+    }
+    
+    // 并行执行这一批
+    const batchResults = await Promise.all(
+      ready.map(async call => {
+        const tool = registry.get(call.toolName);
+        const result = await executeTool(tool, call.input, context);
+        return [call.toolName, result] as const;
+      })
+    );
+    
+    // 记录结果，移除已完成的调用
+    for (const [name, result] of batchResults) {
+      results.set(name, result);
+      remaining.splice(remaining.findIndex(r => r.toolName === name), 1);
+    }
+  }
   
   return results;
 }
@@ -378,19 +415,19 @@ export const GitTool = buildTool({
     rules: [
       // status/diff/log 自动批准
       {
-        condition: (input) => ['status', 'diff', 'log'].includes(input.command),
+        condition: (input, ctx) => ['status', 'diff', 'log'].includes(input.command),
         action: 'allow',
       },
       // commit/push/pull 需要确认
       {
-        condition: (input) => ['commit', 'push', 'pull'].includes(input.command),
+        condition: (input, ctx) => ['commit', 'push', 'pull'].includes(input.command),
         action: 'prompt',
       },
     ],
   },
   execute: async (input, context) => {
     const result = await execGit(input.command, input.args, context.cwd);
-    return { output: result.stdout, error: result.stderr };
+    return { success: true, data: { output: result.stdout, error: result.stderr } };
   },
 });
 ```
