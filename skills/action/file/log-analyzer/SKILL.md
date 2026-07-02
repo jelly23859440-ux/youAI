@@ -402,6 +402,8 @@ if __name__ == "__main__":
     # 解析时间参数
     start_dt = datetime.strptime(args.start, "%Y-%m-%d") if args.start else None
     end_dt = datetime.strptime(args.end, "%Y-%m-%d") if args.end else None
+    if end_dt:
+        end_dt = end_dt.replace(hour=23, minute=59, second=59)
     
     # 按时间过滤
     if start_dt or end_dt:
