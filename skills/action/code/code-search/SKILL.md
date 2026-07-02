@@ -3,7 +3,7 @@ name: 代码搜索
 layer: action
 category: code
 description: 使用 ripgrep 搜索代码库，支持正则表达式和文件类型过滤
-version: 1.1
+version: 1.2
 ---
 
 # 代码搜索
@@ -14,7 +14,7 @@ version: 1.1
 
 - 正则表达式搜索
 - 文件类型过滤（按扩展名）
-- 上下文行数控制
+- 上下文行数控制（匹配行前后）
 - 大小写敏感/不敏感
 - 多文件批量搜索
 - 支持多目录搜索
@@ -49,6 +49,7 @@ rg "pattern" -l
 ```python
 import subprocess
 import re
+import json
 from typing import List, Dict, Optional
 from dataclasses import dataclass, field
 
@@ -118,13 +119,14 @@ class CodeSearcher:
             for ft in file_types:
                 cmd.extend(["-t", ft])
         
+        # 使用 --json 获取结构化输出，彻底解决上下文解析问题
+        cmd.extend(["--json"])
+        
         if context_lines > 0:
             cmd.extend(["-C", str(context_lines)])
         
-        # --no-heading: 不显示文件名头
-        # -n: 显示行号
-        # --column: 显示列号
-        cmd.extend(["--no-heading", "-n", "--column"])
+        # 使用 -m 限制 ripgrep 输出数量，避免内存浪费
+        cmd.extend(["-m", str(max_results)])
         
         try:
             result = subprocess.run(
@@ -138,44 +140,46 @@ class CodeSearcher:
         except Exception as e:
             raise RuntimeError(f"搜索失败: {e}")
         
-        return self._parse_output(result.stdout, max_results, context_lines)
+        return self._parse_json_output(result.stdout)
     
-    def _parse_output(
-        self, 
-        output: str, 
-        max_results: int,
-        context_lines: int = 0
-    ) -> List[SearchResult]:
+    def _parse_json_output(self, output: str) -> List[SearchResult]:
         """
-        解析 ripgrep 输出
+        解析 ripgrep --json 输出
         
-        输出格式（带 --column）:
-        file:line:col:content          # 匹配行
-        file:line-content              # 上下文行（-C 参数）
+        JSON 输出格式：
+        {"type":"begin","data":{"path":{"text":"file.py"}}}
+        {"type":"match","data":{"path":{"text":"file.py"},"lines":{"text":"..."},"line_number":10,"submatches":[...]}}
+        {"type":"context","data":{"path":{"text":"file.py"},"lines":{"text":"..."},"line_number":9}}
+        {"type":"end","data":{"path":{"text":"file.py"},"stats":{"elapsed":...}}}
         """
         results = []
-        lines = output.strip().split('\n')
-        
         current_file = ""
         context_before = []
-        context_after = []
-        match_line = None
         
-        for line in lines:
+        for line in output.strip().split('\n'):
             if not line:
                 continue
             
-            # 检查是否是上下文行（格式: file:line-content）
-            context_match = re.match(r'^(.+?):(\d+)-(.+)$', line)
-            # 检查是否是匹配行（格式: file:line:col:content）
-            match_match = re.match(r'^(.+?):(\d+):(\d+):(.+)$', line)
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
             
-            if match_match:
-                # 匹配行
-                file_path = match_match.group(1)
-                line_num = int(match_match.group(2))
-                column = int(match_match.group(3))
-                content = match_match.group(4).strip()
+            msg_type = data.get("type")
+            msg_data = data.get("data", {})
+            
+            if msg_type == "begin":
+                current_file = msg_data.get("path", {}).get("text", "")
+                context_before = []
+                
+            elif msg_type == "match":
+                file_path = msg_data.get("path", {}).get("text", current_file)
+                line_num = msg_data.get("line_number", 0)
+                content = msg_data.get("lines", {}).get("text", "").strip()
+                
+                # 获取列号
+                submatches = msg_data.get("submatches", [])
+                column = submatches[0].get("start", 0) if submatches else 0
                 
                 results.append(SearchResult(
                     file=file_path,
@@ -188,17 +192,15 @@ class CodeSearcher:
                 
                 context_before = []
                 
-                if len(results) >= max_results:
-                    break
-                    
-            elif context_match:
-                # 上下文行
-                file_path = context_match.group(1)
-                line_num = int(context_match.group(2))
-                content = context_match.group(3).strip()
+            elif msg_type == "context":
+                file_path = msg_data.get("path", {}).get("text", current_file)
+                line_num = msg_data.get("line_number", 0)
+                content = msg_data.get("lines", {}).get("text", "").strip()
                 
+                # 收集上下文行
                 context_before.append(content)
-                if len(context_before) > context_lines:
+                # 保持上下文行数不超过限制
+                if len(context_before) > 20:  # 假设最大上下文
                     context_before.pop(0)
         
         return results
@@ -206,58 +208,62 @@ class CodeSearcher:
     def search_files(
         self,
         pattern: str,
-        extensions: Optional[List[str]] = None,
+        file_types: Optional[List[str]] = None,
         directory: str = ".",
         ignore_case: bool = False
     ) -> Dict[str, List[int]]:
         """
         搜索文件并返回匹配行号
         
-        单次搜索获取全部结果，按文件分组（避免 N+1 子进程问题）
-        
         Args:
             pattern: 搜索模式
-            extensions: 文件扩展名过滤
+            file_types: 文件类型过滤（如 ['py', 'js']）
             directory: 搜索目录
             ignore_case: 是否忽略大小写
             
         Returns:
             {文件路径: [匹配行号列表]}
         """
-        cmd = [self.ripgrep_path, pattern, directory, "-n", "--no-heading"]
-        
-        if ignore_case:
-            cmd.append("-i")
-        
-        if extensions:
-            for ext in extensions:
-                cmd.extend(["-g", f"*.{ext}"])
-        
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            encoding='utf-8',
-            errors='replace'
-        )
-        
-        file_lines: Dict[str, List[int]] = {}
-        
-        for line in result.stdout.strip().split('\n'):
-            if not line:
-                continue
+        try:
+            cmd = [self.ripgrep_path, pattern, directory, "-n", "--no-heading"]
             
-            # 格式: file:line:content
-            match = re.match(r'^(.+?):(\d+):(.+)$', line)
-            if match:
-                file_path = match.group(1)
-                line_num = int(match.group(2))
+            if ignore_case:
+                cmd.append("-i")
+            
+            if file_types:
+                for ft in file_types:
+                    cmd.extend(["-t", ft])
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace'
+            )
+            
+            file_lines: Dict[str, List[int]] = {}
+            
+            for line in result.stdout.strip().split('\n'):
+                if not line:
+                    continue
                 
-                if file_path not in file_lines:
-                    file_lines[file_path] = []
-                file_lines[file_path].append(line_num)
-        
-        return file_lines
+                # 格式: file:line:content
+                match = re.match(r'^(.+?):(\d+):(.+)$', line)
+                if match:
+                    file_path = match.group(1)
+                    line_num = int(match.group(2))
+                    
+                    if file_path not in file_lines:
+                        file_lines[file_path] = []
+                    file_lines[file_path].append(line_num)
+            
+            return file_lines
+            
+        except FileNotFoundError:
+            raise RuntimeError("ripgrep 未安装")
+        except Exception as e:
+            raise RuntimeError(f"搜索失败: {e}")
     
     def count_matches(
         self,
@@ -276,29 +282,35 @@ class CodeSearcher:
         Returns:
             匹配总数
         """
-        cmd = [self.ripgrep_path, pattern, path, "-c"]
-        
-        if ignore_case:
-            cmd.append("-i")
-        
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            encoding='utf-8',
-            errors='replace'
-        )
-        total = 0
-        
-        for line in result.stdout.strip().split('\n'):
-            if ':' in line:
-                count_str = line.split(':')[-1]
-                try:
-                    total += int(count_str)
-                except ValueError:
-                    pass
-        
-        return total
+        try:
+            cmd = [self.ripgrep_path, pattern, path, "-c"]
+            
+            if ignore_case:
+                cmd.append("-i")
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace'
+            )
+            total = 0
+            
+            for line in result.stdout.strip().split('\n'):
+                if ':' in line:
+                    count_str = line.split(':')[-1]
+                    try:
+                        total += int(count_str)
+                    except ValueError:
+                        pass
+            
+            return total
+            
+        except FileNotFoundError:
+            raise RuntimeError("ripgrep 未安装")
+        except Exception as e:
+            raise RuntimeError(f"搜索失败: {e}")
 
 
 # 使用示例
