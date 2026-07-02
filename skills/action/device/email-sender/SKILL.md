@@ -20,7 +20,7 @@ description: >
 | HTML 邮件 | 发送富文本邮件 |
 | 附件支持 | 支持单个/多个附件 |
 | 批量发送 | 支持群发邮件 |
-| SMTP 支持 | 支持主流邮件服务商 |
+| SMTP 支持 | 支持主流邮件服务商（SSL/TLS） |
 
 ## 前置条件
 
@@ -34,27 +34,27 @@ description: >
 
 ### SMTP 服务器配置
 
-| 服务商 | SMTP 服务器 | 端口 |
-|--------|-------------|------|
-| Gmail | smtp.gmail.com | 587 |
-| QQ邮箱 | smtp.qq.com | 587 |
-| 163邮箱 | smtp.163.com | 465 |
-| Outlook | smtp.office365.com | 587 |
-| 自建 | 你的服务器地址 | 465/587 |
+| 服务商 | SMTP 服务器 | 端口 | 连接方式 |
+|--------|-------------|------|----------|
+| Gmail | smtp.gmail.com | 587 | STARTTLS |
+| QQ邮箱 | smtp.qq.com | 587 | STARTTLS |
+| 163邮箱 | smtp.163.com | 465 | SSL |
+| Outlook | smtp.office365.com | 587 | STARTTLS |
 
 ## 使用方法
 
-### 基础邮件发送
+### 完整代码
 
 ```python
 import smtplib
+import argparse
+import os
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
 from email.mime.application import MIMEApplication
-from email import encoders
 from typing import List, Optional, Dict
-import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 
 class EmailSender:
     """邮件发送器"""
@@ -80,12 +80,7 @@ class EmailSender:
         body: str,
         cc: Optional[str | List[str]] = None
     ) -> Dict:
-        """
-        发送文本邮件。
-        
-        Returns:
-            {"success": bool, "message": str}
-        """
+        """发送文本邮件"""
         if isinstance(to, str):
             to = [to]
         
@@ -109,16 +104,7 @@ class EmailSender:
         text_body: Optional[str] = None,
         cc: Optional[str | List[str]] = None
     ) -> Dict:
-        """
-        发送 HTML 邮件。
-        
-        Args:
-            to: 收件人（字符串或列表）
-            subject: 主题
-            html_body: HTML 内容
-            text_body: 纯文本备用（可选）
-            cc: 抄送（可选）
-        """
+        """发送 HTML 邮件"""
         if isinstance(to, str):
             to = [to]
         
@@ -145,10 +131,11 @@ class EmailSender:
         subject: str,
         body: str,
         attachments: List[str],
-        is_html: bool = False
+        is_html: bool = False,
+        cc: Optional[str | List[str]] = None
     ) -> Dict:
         """
-        发送带附件的邮件。
+        发送带附件的邮件
         
         Args:
             to: 收件人
@@ -156,6 +143,7 @@ class EmailSender:
             body: 邮件正文
             attachments: 附件文件路径列表
             is_html: 正文是否为 HTML
+            cc: 抄送（可选）
         """
         if isinstance(to, str):
             to = [to]
@@ -165,8 +153,15 @@ class EmailSender:
         msg['To'] = ', '.join(to)
         msg['Subject'] = subject
         
+        if cc:
+            if isinstance(cc, str):
+                cc = [cc]
+            msg['Cc'] = ', '.join(cc)
+        
         content_type = 'html' if is_html else 'plain'
         msg.attach(MIMEText(body, content_type, 'utf-8'))
+        
+        missing_attachments = []
         
         for file_path in attachments:
             if os.path.exists(file_path):
@@ -179,17 +174,28 @@ class EmailSender:
                     )
                     msg.attach(part)
             else:
-                print(f"警告: 附件不存在 - {file_path}")
+                missing_attachments.append(file_path)
         
-        return self._send(msg, to)
+        result = self._send(msg, to + (cc or []))
+        result["missing_attachments"] = missing_attachments
+        return result
     
     def _send(self, msg: MIMEMultipart, recipients: List[str]) -> Dict:
-        """实际发送邮件"""
+        """
+        实际发送邮件
+        
+        支持 SSL（465端口）和 STARTTLS（587端口）两种方式
+        """
         try:
-            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
+            # 465 端口使用 SSL 直连，其他端口使用 STARTTLS
+            if self.smtp_port == 465:
+                server = smtplib.SMTP_SSL(self.smtp_server, self.smtp_port, timeout=30)
+            else:
+                server = smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=30)
                 if self.use_tls:
                     server.starttls()
-                
+            
+            with server:
                 server.login(self.username, self.password)
                 server.send_message(msg, self.username, recipients)
                 
@@ -213,96 +219,6 @@ class EmailSender:
                 "message": f"发送失败: {str(e)}"
             }
 
-# 使用示例
-if __name__ == "__main__":
-    sender = EmailSender(
-        smtp_server="smtp.qq.com",
-        smtp_port=587,
-        username="your_email@qq.com",
-        password="your_smtp_password"
-    )
-    
-    result = sender.send_text(
-        to="recipient@example.com",
-        subject="测试邮件",
-        body="这是一封测试邮件"
-    )
-    print(result["message"])
-```
-
-### HTML 模板邮件
-
-```python
-def send_html_report(
-    sender: EmailSender,
-    to: str,
-    title: str,
-    data: Dict
-) -> Dict:
-    """发送 HTML 报告邮件"""
-    html_template = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <style>
-            body {{ font-family: Arial, sans-serif; padding: 20px; }}
-            .header {{ background: #4CAF50; color: white; padding: 15px; border-radius: 5px; }}
-            .content {{ padding: 20px; background: #f9f9f9; margin: 15px 0; border-radius: 5px; }}
-            .footer {{ color: #666; font-size: 12px; margin-top: 20px; }}
-            table {{ width: 100%; border-collapse: collapse; }}
-            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-            th {{ background: #4CAF50; color: white; }}
-        </style>
-    </head>
-    <body>
-        <div class="header">
-            <h1>{title}</h1>
-        </div>
-        <div class="content">
-            <h2>报告摘要</h2>
-            <table>
-                <tr><th>指标</th><th>数值</th></tr>
-                {" ".join(f'<tr><td>{k}</td><td>{v}</td></tr>' for k, v in data.items())}
-            </table>
-        </div>
-        <div class="footer">
-            <p>此邮件由系统自动发送</p>
-        </div>
-    </body>
-    </html>
-    """
-    
-    return sender.send_html(
-        to=to,
-        subject=f"{title} - {data.get('date', '')}",
-        html_body=html_template
-    )
-
-# 使用示例
-if __name__ == "__main__":
-    sender = EmailSender(
-        smtp_server="smtp.qq.com",
-        smtp_port=587,
-        username="your_email@qq.com",
-        password="your_smtp_password"
-    )
-    
-    report_data = {
-        "date": "2024-03-15",
-        "total_users": "1,234",
-        "active_users": "567",
-        "revenue": "$89,012"
-    }
-    
-    result = send_html_report(sender, "admin@example.com", "周报", report_data)
-    print(result["message"])
-```
-
-### 批量邮件发送
-
-```python
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict
 
 class BulkEmailSender:
     """批量邮件发送器"""
@@ -319,7 +235,7 @@ class BulkEmailSender:
         is_html: bool = False
     ) -> List[Dict]:
         """
-        批量发送邮件。
+        批量发送邮件
         
         Returns:
             [{"email": str, "success": bool, "message": str}, ...]
@@ -336,7 +252,10 @@ class BulkEmailSender:
             
             for future in as_completed(futures):
                 email = futures[future]
-                result = future.result()
+                try:
+                    result = future.result()
+                except Exception as e:
+                    result = {"success": False, "message": str(e)}
                 results.append({"email": email, **result})
         
         return results
@@ -354,36 +273,7 @@ class BulkEmailSender:
         else:
             return self.sender.send_text(email, subject, body)
 
-# 使用示例
-if __name__ == "__main__":
-    sender = EmailSender(
-        smtp_server="smtp.qq.com",
-        smtp_port=587,
-        username="your_email@qq.com",
-        password="your_smtp_password"
-    )
-    
-    bulk = BulkEmailSender(sender, max_workers=10)
-    
-    recipients = [
-        "user1@example.com",
-        "user2@example.com",
-        "user3@example.com",
-    ]
-    
-    results = bulk.send_bulk(
-        recipients=recipients,
-        subject="系统通知",
-        body="这是一封系统通知邮件"
-    )
-    
-    success_count = sum(1 for r in results if r["success"])
-    print(f"发送完成: {success_count}/{len(results)} 成功")
-```
 
-### 预设邮件服务配置
-
-```python
 class EmailProviders:
     """邮件服务商预设配置"""
     
@@ -430,79 +320,159 @@ class EmailProviders:
             use_tls=config["use_tls"]
         )
 
-# 使用示例
-if __name__ == "__main__":
-    sender = EmailProviders.get_sender(
-        provider="qq",
-        username="your_email@qq.com",
-        password="your_smtp_password"
-    )
+
+# 命令行入口
+def main():
+    parser = argparse.ArgumentParser(description="邮件发送工具")
     
-    result = sender.send_text(
-        to="recipient@example.com",
-        subject="测试",
-        body="QQ邮箱发送测试"
-    )
+    # 服务器配置
+    parser.add_argument("--provider", choices=["qq", "163", "gmail", "outlook"], help="邮件服务商")
+    parser.add_argument("--smtp-server", help="SMTP 服务器地址")
+    parser.add_argument("--smtp-port", type=int, help="SMTP 端口")
+    parser.add_argument("--username", required=True, help="发件人邮箱")
+    parser.add_argument("--password", required=True, help="SMTP 密码/授权码")
+    parser.add_argument("--no-tls", action="store_true", help="禁用 STARTTLS")
+    
+    # 收件人
+    parser.add_argument("--to", help="收件人（逗号分隔）")
+    parser.add_argument("--cc", help="抄送（逗号分隔）")
+    parser.add_argument("--recipients", help="收件人列表文件（每行一个）")
+    
+    # 邮件内容
+    parser.add_argument("--subject", required=True, help="邮件主题")
+    parser.add_argument("--body", help="邮件正文")
+    parser.add_argument("--html", help="HTML 正文")
+    parser.add_argument("--attach", action="append", help="附件路径（可多次使用）")
+    
+    args = parser.parse_args()
+    
+    # 创建发送器
+    if args.provider:
+        sender = EmailProviders.get_sender(args.provider, args.username, args.password)
+    else:
+        if not args.smtp_server:
+            parser.error("需要 --smtp-server 或 --provider")
+        sender = EmailSender(
+            smtp_server=args.smtp_server,
+            smtp_port=args.smtp_port or 587,
+            username=args.username,
+            password=args.password,
+            use_tls=not args.no_tls
+        )
+    
+    # 获取收件人
+    if args.recipients:
+        with open(args.recipients, 'r') as f:
+            recipients = [line.strip() for line in f if line.strip()]
+    elif args.to:
+        recipients = [email.strip() for email in args.to.split(',')]
+    else:
+        parser.error("需要 --to 或 --recipients")
+    
+    # 发送邮件
+    if args.attach:
+        result = sender.send_with_attachments(
+            to=recipients,
+            subject=args.subject,
+            body=args.body or "",
+            attachments=args.attach,
+            is_html=bool(args.html),
+            cc=args.cc
+        )
+    elif args.html:
+        result = sender.send_html(
+            to=recipients,
+            subject=args.subject,
+            html_body=args.html,
+            text_body=args.body,
+            cc=args.cc
+        )
+    else:
+        result = sender.send_text(
+            to=recipients,
+            subject=args.subject,
+            body=args.body or "",
+            cc=args.cc
+        )
+    
     print(result["message"])
+    if result.get("missing_attachments"):
+        print(f"警告: 以下附件不存在: {result['missing_attachments']}")
+
+
+if __name__ == "__main__":
+    main()
 ```
+
+## 使用示例
 
 ### 命令行用法
 
 ```bash
-# 发送文本邮件
-python email_sender.py --to user@example.com --subject "测试" --body "邮件内容"
+# 发送文本邮件（QQ邮箱）
+python email_sender.py --provider qq --username user@qq.com --password xxx \
+  --to recipient@example.com --subject "测试" --body "邮件内容"
 
-# 发送 HTML 邮件
-python email_sender.py --to user@example.com --subject "报告" --html "<h1>报告</h1>"
+# 发送 HTML 邮件（163邮箱，SSL）
+python email_sender.py --provider 163 --username user@163.com --password xxx \
+  --to recipient@example.com --subject "报告" --html "<h1>报告</h1>"
 
 # 发送带附件邮件
-python email_sender.py --to user@example.com --subject "文件" --body "请查收附件" --attach file.pdf
+python email_sender.py --provider qq --username user@qq.com --password xxx \
+  --to recipient@example.com --subject "文件" --body "请查收附件" \
+  --attach file1.pdf --attach file2.docx
 
 # 批量发送
-python email_sender.py --recipients list.txt --subject "通知" --body "系统通知"
+python email_sender.py --provider qq --username user@qq.com --password xxx \
+  --recipients list.txt --subject "通知" --body "系统通知"
+
+# 指定 SMTP 服务器
+python email_sender.py --smtp-server smtp.example.com --smtp-port 465 \
+  --username user@example.com --password xxx \
+  --to recipient@example.com --subject "测试" --body "邮件内容" --no-tls
+```
+
+### Python 代码调用
+
+```python
+# 使用预设服务商
+sender = EmailProviders.get_sender("163", "user@163.com", "password")
+result = sender.send_text("recipient@example.com", "测试", "内容")
+
+# 使用自定义 SMTP
+sender = EmailSender("smtp.example.com", 465, "user@example.com", "password")
+result = sender.send_with_attachments(
+    to="recipient@example.com",
+    subject="文件",
+    body="请查收",
+    attachments=["file.pdf"]
+)
+
+# 批量发送
+bulk = BulkEmailSender(sender, max_workers=10)
+results = bulk.send_bulk(["a@x.com", "b@x.com"], "通知", "内容")
 ```
 
 ## 问题排查
 
-### 问题 1：SMTP 认证失败
-
-**原因**：密码错误或需要应用专用密码。
-
-**解决**：
-- QQ邮箱：开启 SMTP 服务，获取授权码
-- Gmail：启用"应用专用密码"
-- 163邮箱：开启 SMTP 服务并设置授权码
-
-### 问题 2：邮件被标记为垃圾邮件
-
-**原因**：发送频率过高或内容触发规则。
-
-**解决**：
-- 降低发送频率
-- 避免敏感关键词
-- 设置正确的 SPF/DKIM 记录
-
-### 问题 3：附件发送失败
-
-**原因**：文件路径错误或文件过大。
-
-**解决**：
-- 检查文件路径是否存在
-- 压缩大文件或分卷发送
-- 检查邮件服务商附件大小限制
+| 问题 | 原因 | 解决 |
+|------|------|------|
+| SMTP 认证失败 | 密码错误或需要授权码 | 开启 SMTP 服务，获取授权码 |
+| 连接超时 | 网络问题或端口错误 | 检查端口：587用STARTTLS，465用SSL |
+| 邮件被拦截 | 发送频率过高 | 降低频率，设置 SPF/DKIM |
+| 附件过大 | 超过服务商限制 | 压缩文件或分卷发送 |
 
 ## 依赖
 
-| 依赖 | 版本 | 类型 |
+| 依赖 | 版本 | 用途 |
 |------|------|------|
-| Python | 3.8+ | 必需 |
-| smtplib | 内置 | 必需 |
-| email | 内置 | 必需 |
+| Python | 3.8+ | 运行环境 |
+| smtplib | 内置 | SMTP 客户端 |
+| email | 内置 | 邮件构造 |
 
 ## Agent 执行规范
 
-### 核心约束
-- **密码安全**：使用环境变量存储 SMTP 密码，不要硬编码
+- **密码安全**：使用环境变量存储密码，不要硬编码
 - **发送确认**：批量发送前先测试单封
 - **错误记录**：记录所有发送失败的邮件
 - **频率限制**：遵守邮件服务商的发送限制
