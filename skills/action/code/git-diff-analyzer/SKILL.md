@@ -132,10 +132,11 @@ def parse_diff(diff_text: str) -> DiffReport:
     
     for line in diff_text.split("\n"):
         if line.startswith("diff --git"):
-            # 解析文件名：diff --git a/file.py b/file.py
-            match = re.search(r"b/(.+)$", line)
-            if match:
-                current_file = FileChange(filename=match.group(1))
+            # 使用 " b/" 分割，避免路径中包含 b/ 时提前匹配
+            parts = line.split(" b/")
+            if len(parts) >= 2:
+                filename = parts[-1].strip('"')
+                current_file = FileChange(filename=filename)
                 report.files.append(current_file)
                 is_rename = False
         
@@ -195,11 +196,20 @@ def get_file_status(filename: str, repo_path: str = ".") -> str:
     return status_map.get(status_code[0], "modified")
 
 
-def analyze(repo_path: str = ".") -> DiffReport:
-    """分析当前工作区变更"""
-    diff_text = get_diff(repo_path)
-    if not diff_text:
+def analyze(repo_path: str = ".", staged_only: bool = False) -> DiffReport:
+    """
+    分析工作区变更
+    
+    Args:
+        repo_path: 仓库路径
+        staged_only: 是否只分析已暂存变更
+    """
+    if staged_only:
         diff_text = get_staged_diff(repo_path)
+    else:
+        diff_text = get_diff(repo_path)
+        if not diff_text:
+            diff_text = get_staged_diff(repo_path)
 
     report = parse_diff(diff_text)
 
@@ -345,11 +355,14 @@ def tool_call(params: dict) -> dict:
     
     params: {
         "repo_path": str,      # 仓库路径，默认"."
-        "mode": str,           # "diff" | "commits" | "commit"
+        "mode": str,           # "diff" | "commits" | "commit" | "diff_between"
         "commit_hash": str,    # 提交哈希（mode=commit时）
+        "commit1": str,        # 旧提交哈希（mode=diff_between时）
+        "commit2": str,        # 新提交哈希（mode=diff_between时）
         "author": str,         # 按作者筛选（mode=commits时）
         "since": str,          # 起始日期
         "until": str,          # 结束日期
+        "staged": bool,        # 是否只分析已暂存变更（mode=diff时）
         "format": str,         # "json" | "markdown"
     }
     """
@@ -357,6 +370,7 @@ def tool_call(params: dict) -> dict:
         repo_path = params.get("repo_path", ".")
         mode = params.get("mode", "diff")
         fmt = params.get("format", "json")
+        staged = params.get("staged", False)
         
         if mode == "commit":
             # 分析单个提交
@@ -378,9 +392,20 @@ def tool_call(params: dict) -> dict:
             data = commits if fmt == "json" else _commits_to_markdown(commits)
             return {"status": "success", "data": data}
             
+        elif mode == "diff_between":
+            # 分析两个提交之间的 diff
+            commit1 = params.get("commit1")
+            commit2 = params.get("commit2")
+            if not commit1 or not commit2:
+                return {"status": "error", "error": "缺少 commit1 或 commit2 参数"}
+            diff_text = get_diff_between(commit1, commit2, repo_path)
+            report = parse_diff(diff_text)
+            data = to_json(report) if fmt == "json" else to_markdown(report)
+            return {"status": "success", "data": data}
+            
         else:
             # 分析当前 diff
-            report = analyze(repo_path)
+            report = analyze(repo_path, staged_only=staged)
             data = to_json(report) if fmt == "json" else to_markdown(report)
             return {"status": "success", "data": data}
             
@@ -413,6 +438,7 @@ def main():
     parser.add_argument("--since", help="起始日期 (YYYY-MM-DD)")
     parser.add_argument("--until", help="结束日期 (YYYY-MM-DD)")
     parser.add_argument("--commit", help="分析指定提交的 diff")
+    parser.add_argument("--diff-between", nargs=2, metavar=("COMMIT1", "COMMIT2"), help="分析两个提交之间的 diff")
     parser.add_argument("--staged", action="store_true", help="分析已暂存变更")
     parser.add_argument("--format", choices=["json", "markdown"], default="markdown", help="输出格式")
     args = parser.parse_args()
@@ -420,6 +446,15 @@ def main():
     if args.commit:
         # 分析单个提交
         report = analyze_commit(args.commit, args.repo)
+        if args.format == "json":
+            print(json.dumps(to_json(report), ensure_ascii=False, indent=2))
+        else:
+            print(to_markdown(report))
+    elif args.diff_between:
+        # 分析两个提交之间的 diff
+        commit1, commit2 = args.diff_between
+        diff_text = get_diff_between(commit1, commit2, args.repo)
+        report = parse_diff(diff_text)
         if args.format == "json":
             print(json.dumps(to_json(report), ensure_ascii=False, indent=2))
         else:
@@ -438,7 +473,7 @@ def main():
             print(_commits_to_markdown(commits))
     else:
         # 分析当前 diff
-        report = analyze(args.repo)
+        report = analyze(args.repo, staged_only=args.staged)
         if args.format == "json":
             print(json.dumps(to_json(report), ensure_ascii=False, indent=2))
         else:
@@ -463,6 +498,9 @@ python git_diff_analyzer.py --author "张三" --since 2025-01-01
 
 # 分析指定提交
 python git_diff_analyzer.py --commit abc123
+
+# 分析两个提交之间的 diff
+python git_diff_analyzer.py --diff-between abc123 def456
 
 # 输出 JSON
 python git_diff_analyzer.py --format json
