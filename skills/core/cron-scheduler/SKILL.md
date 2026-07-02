@@ -28,17 +28,14 @@ description: >
 - Python 3.8+
 - 无第三方依赖（纯标准库）
 
-## 安装步骤
-
-无额外安装。将下方代码保存为 `cron_parser.py` 即可使用。
-
 ## 使用方法
 
-### 基础用法：解析并计算下次执行
+### 完整代码
 
 ```python
 from datetime import datetime, timedelta
 from typing import List, Optional
+
 
 class CronParser:
     """标准 cron 表达式解析器（5 字段格式：分 时 日 月 周）"""
@@ -78,9 +75,13 @@ class CronParser:
                 raise ValueError(f"步长必须大于 0: {part}")
             if base == "*":
                 return set(range(lo, hi + 1, step))
-            else:
+            elif "-" in base:
                 start, end = self._parse_range(base, lo, hi)
                 return set(range(start, end + 1, step))
+            else:
+                # 支持 "1/2" 格式（从 1 开始步长 2）
+                start = int(base)
+                return set(range(start, hi + 1, step))
         elif "-" in part:
             start, end = self._parse_range(part, lo, hi)
             return set(range(start, end + 1))
@@ -88,6 +89,9 @@ class CronParser:
             return set(range(lo, hi + 1))
         else:
             val = int(part)
+            # 支持 weekday=7 映射为 0（周日）
+            if val == 7:
+                val = 0
             if not (lo <= val <= hi):
                 raise ValueError(f"值 {val} 超出范围 [{lo}-{hi}]")
             return {val}
@@ -108,22 +112,23 @@ class CronParser:
         if dt.month not in self.parsed["month"]:
             return False
 
+        # 星期映射：Python weekday() 0=周一..6=周日 → Cron 0=周日..6=周六
         weekday = dt.weekday()
-        if weekday == 6:
-            weekday = 0
-        else:
-            weekday += 1
+        cron_weekday = 0 if weekday == 6 else weekday + 1
 
-        if "day" in self.fields and "weekday" in self.fields:
-            day_match = dt.day in self.parsed["day"]
-            weekday_match = weekday in self.parsed["weekday"]
-            return day_match and weekday_match
-        elif "day" in self.fields and self.fields[2] != "*":
+        # 检查 day 和 weekday 字段是否被指定
+        day_specified = self.fields[2] != "*"
+        weekday_specified = self.fields[4] != "*"
+
+        if not day_specified and not weekday_specified:
+            return True  # 都未指定，每天匹配
+        elif day_specified and not weekday_specified:
             return dt.day in self.parsed["day"]
-        elif "weekday" in self.fields and self.fields[4] != "*":
-            return weekday in self.parsed["weekday"]
-
-        return True
+        elif weekday_specified and not day_specified:
+            return cron_weekday in self.parsed["weekday"]
+        else:
+            # 标准 cron：day 和 weekday 都指定时为 OR 关系
+            return dt.day in self.parsed["day"] or cron_weekday in self.parsed["weekday"]
 
     def next_run(self, after: Optional[datetime] = None, count: int = 1) -> List[datetime]:
         """计算从 after 时间起的下 N 次执行时间"""
@@ -132,7 +137,8 @@ class CronParser:
 
         results = []
         current = after.replace(second=0, microsecond=0) + timedelta(minutes=1)
-        max_iterations = 366 * 24 * 60
+        # 扩大到 4 年，支持闰年等稀疏表达式
+        max_iterations = 4 * 366 * 24 * 60
 
         for _ in range(max_iterations):
             if self.matches(current):
@@ -148,6 +154,7 @@ class CronParser:
         parts = []
         f = self.fields
 
+        # 分钟
         if f[0] == "*":
             parts.append("每分钟")
         elif "/" in f[0]:
@@ -156,6 +163,7 @@ class CronParser:
         else:
             parts.append(f"在第 {f[0]} 分钟")
 
+        # 小时
         if f[1] == "*":
             parts.append("每小时")
         elif "/" in f[1]:
@@ -164,20 +172,38 @@ class CronParser:
         else:
             parts.append(f"在 {f[1]} 时")
 
+        # 日/周
+        weekday_names = {0: "日", 1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六"}
+
         if f[2] == "*" and f[4] == "*":
             parts.append("每天")
         elif f[4] != "*":
-            weekday_names = {0: "日", 1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六"}
             if "," in f[4]:
-                days = [weekday_names.get(int(d), d) for d in f[4].split(",")]
+                days = []
+                for d in f[4].split(","):
+                    if d.isdigit():
+                        days.append(weekday_names.get(int(d) % 7, d))
+                    else:
+                        days.append(d)
                 parts.append(f"每周 {'/'.join(days)}")
+            elif f[4].isdigit():
+                parts.append(f"周{weekday_names.get(int(f[4]) % 7, f[4])}")
+            elif "-" in f[4]:
+                start, end = f[4].split("-", 1)
+                start_name = weekday_names.get(int(start) % 7, start)
+                end_name = weekday_names.get(int(end) % 7, end)
+                parts.append(f"周 {start_name} 到 {end_name}")
             else:
-                parts.append(f"周{'日一二三四五六七'[int(f[4])]}" if f[4].isdigit() else f"周 {f[4]}")
+                parts.append(f"周 {f[4]}")
+        elif f[2] != "*":
+            parts.append(f"在每月 {f[2]} 日")
 
+        # 月份
         if f[3] != "*":
             parts.append(f"在 {f[3]} 月")
 
         return "，".join(parts)
+
 
 # 使用示例
 if __name__ == "__main__":
@@ -191,9 +217,30 @@ if __name__ == "__main__":
     print(f"\n匹配测试:")
     test_time = datetime(2025, 7, 1, 10, 15)
     print(f"  {test_time}: {'匹配' if cron.matches(test_time) else '不匹配'}")
+
+
+def validate_cron_expressions(expressions: List[str]) -> List[dict]:
+    """批量验证 cron 表达式"""
+    results = []
+    for expr in expressions:
+        try:
+            cron = CronParser(expr)
+            results.append({
+                "expression": expr,
+                "valid": True,
+                "description": cron.describe(),
+                "next_run": cron.next_run(count=1)[0].isoformat() if cron.next_run(count=1) else None,
+            })
+        except Exception as e:
+            results.append({
+                "expression": expr,
+                "valid": False,
+                "error": str(e),
+            })
+    return results
 ```
 
-### 常用 cron 表达式速查
+## 常用 cron 表达式速查
 
 | 表达式 | 含义 |
 |--------|------|
@@ -205,70 +252,48 @@ if __name__ == "__main__":
 | `0 0 1 * *` | 每月 1 日午夜 |
 | `30 8 * * 1` | 每周一 8:30 |
 | `0 */2 * * *` | 每 2 小时 |
+| `0 0 * * 0` | 每周日午夜 |
+| `0 0 15 * *` | 每月 15 日午夜 |
 
-### 批量验证
+## 使用示例
 
 ```python
-def validate_cron_expressions(expressions: List[str]) -> List[dict]:
-    """批量验证 cron 表达式"""
-    results = []
-    for expr in expressions:
-        try:
-            cron = CronParser(expr)
-            results.append({
-                "expression": expr,
-                "valid": True,
-                "description": cron.describe(),
-                "next_run": cron.next_run(count=1)[0].isoformat(),
-            })
-        except Exception as e:
-            results.append({
-                "expression": expr,
-                "valid": False,
-                "error": str(e),
-            })
-    return results
+from cron_parser import CronParser, validate_cron_expressions
 
-# 使用示例
-if __name__ == "__main__":
-    exprs = ["*/5 * * * *", "0 9 * * 1-5", "60 * * * *", "0 0 1 * *"]
-    results = validate_cron_expressions(exprs)
-    for r in results:
-        if r["valid"]:
-            print(f"✓ {r['expression']}: {r['description']}")
-        else:
-            print(f"✗ {r['expression']}: {r['error']}")
+# 基础用法
+cron = CronParser("*/5 * * * *")
+print(cron.describe())  # "每 5 分钟"
+print(cron.next_run(count=3))  # 下 3 次执行时间
+
+# 每周一
+cron = CronParser("0 9 * * 1")
+print(cron.describe())  # "在 9 时，周 一"
+
+# 每月 15 日
+cron = CronParser("0 0 15 * *")
+print(cron.describe())  # "在 0 时，在每月 15 日"
+
+# 批量验证
+results = validate_cron_expressions(["*/5 * * * *", "0 9 * * 1-5", "60 * * * *"])
+for r in results:
+    if r["valid"]:
+        print(f"✓ {r['expression']}: {r['description']}")
+    else:
+        print(f"✗ {r['expression']}: {r['error']}")
 ```
 
 ## 问题排查
 
-### 问题 1：`ValueError: 需要 5 个字段`
-
-**原因**：cron 表达式字段数不对。
-
-**解决**：标准 cron 需要 5 个字段（分 时 日 月 周），检查是否多写了秒字段。
-
-### 问题 2：计算下次执行返回空列表
-
-**原因**：表达式不匹配任何时间（如日期+星期矛盾）。
-
-**解决**：检查日期和星期字段是否冲突。例如 `0 0 31 2 *`（2 月 31 日）无效。
-
-### 问题 3：`ValueError: 值 XX 超出范围`
-
-**原因**：字段值超出有效范围。
-
-**解决**：检查各字段范围：分(0-59)、时(0-23)、日(1-31)、月(1-12)、周(0-7)。
-
-### 问题 4：性能问题（计算太慢）
-
-**原因**：表达式过于稀疏（如 `0 0 1 1 *`），需要遍历大量时间。
-
-**解决**：增加 `max_iterations` 上限，或优化跳过逻辑（先跳到匹配的月/日）。
+| 问题 | 原因 | 解决 |
+|------|------|------|
+| `ValueError: 需要 5 个字段` | 字段数不对 | 检查是否多写了秒字段 |
+| 计算下次执行返回空列表 | 日期+星期矛盾 | 检查 day 和 weekday 是否冲突 |
+| `ValueError: 值 XX 超出范围` | 字段值超范围 | 分(0-59)、时(0-23)、日(1-31)、月(1-12)、周(0-7) |
+| 性能问题（计算太慢） | 表达式过于稀疏 | 稀疏表达式需遍历较长时间 |
+| weekday=7 不生效 | 7 被映射为 0 | 使用 0 表示周日，7 会自动映射 |
 
 ## 依赖
 
-| 依赖 | 版本 | 类型 |
+| 依赖 | 版本 | 用途 |
 |------|------|------|
-| Python | 3.8+ | 必需 |
-| 第三方依赖 | 无 | — |
+| Python | 3.8+ | 运行环境 |
