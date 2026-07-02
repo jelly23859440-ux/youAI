@@ -470,6 +470,7 @@ def main():
     args = parser.parse_args()
     
     # 创建数据库连接
+    db = None
     if args.db.startswith("postgresql://") or args.db.startswith("postgres://"):
         from urllib.parse import urlparse
         parsed = urlparse(args.db)
@@ -508,7 +509,8 @@ def main():
         else:
             parser.print_help()
     finally:
-        db.disconnect()
+        if db:
+            db.disconnect()
 
 if __name__ == "__main__":
     main()
