@@ -72,7 +72,7 @@ git add skills/<category>/<skill-name>/SKILL.md
 # 提交
 git commit -m "feat: 添加 <skill-name> skill"
 
-# 推送
+# 推送（如果报 SSL/连接错误，先执行：git config --global http.sslBackend schannel）
 git push -u origin skill/<skill-name>
 ```
 
@@ -112,3 +112,12 @@ EOF
 - PR 标题格式：`feat: 添加 <skill-name> skill`
 - 一个 PR 只提交一个 Skill
 - 提交前先 `git pull origin main` 确保最新
+
+## 常见问题
+
+| 错误 | 原因 | 解决 |
+|------|------|------|
+| `Failed to connect to github.com port 443` | SSL 配置问题 | `git config --global http.sslBackend schannel` |
+| `Permission denied` | 未登录 GitHub | `gh auth login` 或用浏览器授权 |
+| `remote: Permission to denied` | 没有 Fork | 先 Fork 仓库再提交 |
+| `CONFLICT` | 本地不是最新 | `git pull origin main` 后重试 |
