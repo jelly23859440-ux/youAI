@@ -86,6 +86,19 @@ xcopy /E /Y 你的项目 备份目录
 
 ---
 
+## ✅ 已验证的 Skill
+
+以下 Skill 已测试可用，用户可以直接使用：
+
+| Skill | 说明 | 验证状态 |
+|-------|------|----------|
+| [voice-recognition](skills/action/device/voice-recognition/SKILL.md) | 本地语音识别（4种方案+代码） | ✅ verified |
+| [git-backup](skills/action/tool/git-backup/SKILL.md) | Git 自动备份（被动检测+自动提交） | ✅ verified |
+
+> 其他 Skill 为 `unverified` 状态，仅提供文档参考。
+
+---
+
 ## Quick Start / 快速开始
 
 Tell your AI: "我想做一个 XX 的 AI" / 告诉你的 AI："我想做一个 XX 的 AI"
