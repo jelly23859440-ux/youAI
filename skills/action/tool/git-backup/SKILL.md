@@ -59,36 +59,16 @@ git commit -m "初始提交"
 powershell -File auto_commit.ps1
 ```
 
+> 脚本文件见 `auto_commit.ps1`，修改 `$repoPath` 为你的项目路径即可使用。
+
 ## 自动备份脚本
 
-```powershell
-# auto_commit.ps1 - 被动检测模式
-$repoPath = "你的项目路径"
-$maxCommits = 50
+完整脚本见 [auto_commit.ps1](auto_commit.ps1)。
 
-$watcher = New-Object System.IO.FileSystemWatcher
-$watcher.Path = $repoPath
-$watcher.IncludeSubdirectories = $true
-$watcher.EnableRaisingEvents = $true
-
-$action = {
-    Start-Sleep -Seconds 2
-    Set-Location $repoPath
-    $status = git status --short
-    if ($status) {
-        git add -A
-        git commit -m "自动备份 $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-        Write-Host "已提交" -ForegroundColor Green
-    }
-}
-
-Register-ObjectEvent $watcher "Changed" -Action $action
-Register-ObjectEvent $watcher "Created" -Action $action
-Register-ObjectEvent $watcher "Deleted" -Action $action
-Register-ObjectEvent $watcher "Renamed" -Action $action
-
-while ($true) { Start-Sleep -Seconds 1 }
-```
+**核心功能：**
+- 被动检测：文件变化时自动触发，不轮询
+- 自动提交：变化后自动 `git add -A && git commit`
+- 版本保留：保留最近 50 个版本，自动清理旧的
 
 ## 恢复方法
 
